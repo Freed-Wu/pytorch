@@ -516,12 +516,25 @@ Tensor& addmm_out_cuda_impl(Tensor& result, const Tensor& self, const Tensor& ma
   at::ScalarType scalar_type = mat1.scalar_type();
   bool is_float_output_with_half_input = (scalar_type == at::ScalarType::Half || scalar_type == at::ScalarType::BFloat16) && result.scalar_type() == at::ScalarType::Float;
 
+  // Handle result/self shapes
   if (!result.is_same(self)) {
     at::native::resize_output(result, {mat1.sizes()[0], mat2.sizes()[1]});
+
+    const auto self_maybe_expanded = [&]() -> c10::MaybeOwned<Tensor> {
+      if (disable_addmm_cuda_lt) {
+        // When in non-Lt path we do expand self even before
+        // check for beta != 0.0 to make sure that
+        // test_sparse_csr.py::TestSparseCSRCUDA::test_addmm_errors_*
+        // runs green.
+        return expand_size(self, result.sizes(), "addmm");
+      }
+      // copy next, should broadcast
+      return c10::MaybeOwned<Tensor>::borrowed(self);
+    }();
     // We copy bias when in the non-Lt path
     if (beta.toComplexDouble() != 0.0 && disable_addmm_cuda_lt) {
       // NOTE: self should broadcast over result
-      at::native::copy_(result, self);
+      at::native::copy_(result, *self_maybe_expanded);
     }
   }
 
